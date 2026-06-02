@@ -6,37 +6,39 @@ An intelligent, clinical-grade IoT telemetry platform designed for physical ther
 
 ## 1. High-Level Project Architecture
 
-```text
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                            React.js SPA Dashboard                           │
-│  ┌───────────────────────┐   ┌───────────────────────┐   ┌───────────────┐ │
-│  │   🩺 Doctor Portal    │   │   🤕 Patient Portal   │   │ ⚙️ Engineer   │ │
-│  │   Checklist Tracking  │   │   Real-time SVG Arm   │   │ Diagnostics   │ │
-│  └───────────┬───────────┘   └───────────┬───────────┘   └───────┬───────┘ │
-└──────────────┼───────────────────────────┼───────────────────────┼─────────┘
-                  │ Axios JWT Request         │ Polls Telemetry       │ Query Logs
-   ┌──────────────▼───────────────────────────▼───────────────────────▼─────────┐
-   │                            FastAPI Backend Server                           │
-   │  ┌───────────────────────┐   ┌───────────────────────┐   ┌───────────────┐ │
-   │  │   REST API endpoints  │←─→│    SQLAlchemy ORM     │←─→│ PostgreSQL DB │ │
-   │  │   JWT Auth & Bcrypt   │   │   Models & Session    │   │  (elbow_db)   │ │
-   │  └───────────────────────┘   └───────────────────────┘   └───────────────┘ │
-   └──────────────────────────────────────▲──────────────────────────────────────┘
-                                          │ HTTP POST Telemetry (2-sec throttled)
-   ┌──────────────────────────────────────┴──────────────────────────────────────┐
-   │                            Python Serial Collector                          │
-   │           ┌───────────────────────────────────────────────────────┐         │
-   │           │         pySerial Ingestion script (115200 bps)        │         │
-   │           └──────────────────────────▲────────────────────────────┘         │
-   └──────────────────────────────────────┼──────────────────────────────────────┘
-                                          │ USB Serial COM6 Port
-   ┌──────────────────────────────────────┴──────────────────────────────────────┐
-   │                            Exoskeleton Hardware                             │
-   │           ┌──────────────────────────┴────────────────────────────┐         │
-   │           │      Arduino Uno MCU + 8192 ticks/rev Rotary Encoder   │         │
-   │           └───────────────────────────────────────────────────────┘         │
-   └─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Dashboard [React.js SPA Dashboards]
+        Doc[🩺 Doctor Portal<br/>Checklist Tracking]
+        Pat[🤕 Patient Portal<br/>Real-time SVG Arm]
+        Eng[⚙️ Engineer Portal<br/>Diagnostics & Logs]
+    end
+    
+    subgraph API [FastAPI REST Server]
+        Endpoints[API Endpoints<br/>JWT Auth & Bcrypt]
+        DB[(PostgreSQL Database<br/>elbow_db)]
+        ORM[SQLAlchemy ORM]
+        
+        Endpoints <--> ORM
+        ORM <--> DB
+    end
+    
+    subgraph Collector [Python Serial Ingestion]
+        Script[pySerial Ingestion Script<br/>elbow_encoder.py]
+    end
+    
+    subgraph Hardware [Exoskeleton Hardware]
+        Arduino[Arduino Uno MCU<br/>+ Rotary Encoder 8192 ticks/rev]
+    end
+    
+    Doc -->|Axios REST Requests| Endpoints
+    Pat -->|Polls Telemetry| Endpoints
+    Eng -->|Query Session Logs| Endpoints
+    
+    Arduino -->|USB Serial COM6 @ 115200| Script
+    Script -->|HTTP POST Telemetry| Endpoints
 ```
+
 
 ---
 
