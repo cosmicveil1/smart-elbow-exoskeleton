@@ -18,26 +18,66 @@ def get_db_engine():
 
 engine = get_db_engine()
 
+# ===================== LOAD DATA =====================
+def load_sessions():
+    query = """
+        SELECT id, patient_id, session_name, started_at 
+        FROM patient_sessions 
+        ORDER BY started_at DESC
+    """
+    try:
+        return pd.read_sql(query, engine)
+    except Exception:
+        return pd.DataFrame()
+
+def load_data(session_id, limit=500):
+    if session_id is None:
+        return pd.DataFrame()
+    query = f"""
+        SELECT * FROM elbow_data 
+        WHERE session_id = {session_id}
+        ORDER BY timestamp DESC 
+        LIMIT {limit}
+    """
+    try:
+        df = pd.read_sql(query, engine)
+        if not df.empty:
+            df = df.sort_values('timestamp')
+        return df
+    except Exception:
+        return pd.DataFrame()
+
 # ===================== SIDEBAR =====================
 st.sidebar.header("Dashboard Controls")
 refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 1, 5, 2)
 show_last_n = st.sidebar.slider("Show Last N Records", 100, 1000, 500)
 
-# ===================== LOAD DATA =====================
-def load_data(limit=500):
-    query = f"""
-        SELECT * FROM elbow_data 
-        ORDER BY timestamp DESC 
-        LIMIT {limit}
-    """
-    df = pd.read_sql(query, engine)
-    df = df.sort_values('timestamp')
-    return df
+st.sidebar.markdown("---")
+st.sidebar.header("Patient Session Filter")
 
-df = load_data(show_last_n)
+sessions_df = load_sessions()
+selected_session_id = None
+
+if not sessions_df.empty:
+    session_options = []
+    session_id_map = {}
+    for idx, row in sessions_df.iterrows():
+        label = f"👤 {row['patient_id']} | 📝 {row['session_name'] or 'Unnamed'} ({row['started_at'].strftime('%Y-%m-%d %H:%M')})"
+        session_options.append(label)
+        session_id_map[label] = row['id']
+        
+    selected_option = st.sidebar.selectbox("Select Session", session_options)
+    selected_session_id = session_id_map[selected_option]
+else:
+    st.sidebar.warning("No sessions found in the database. Start the collector to create one.")
+
+df = load_data(selected_session_id, show_last_n)
 
 if df.empty:
-    st.warning("No data yet. Start your collector script!")
+    if selected_session_id is None:
+        st.warning("No sessions found. Start your collector script to create a session!")
+    else:
+        st.warning("No telemetry data yet for this session. Start your collector script!")
     st.stop()
 
 latest = df.iloc[-1]

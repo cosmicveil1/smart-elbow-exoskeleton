@@ -1,31 +1,27 @@
 from datetime import datetime
 from typing import Optional
-
+# pyrefly: ignore [missing-import]
 from pydantic import BaseModel
 
+# --- Patient Session Schemas ---
+class PatientSessionBase(BaseModel):
+    patient_id: str
+    session_name: Optional[str] = None
+    notes: Optional[str] = None
 
-class ElbowDataBase(BaseModel):
-    count: int
-    angle_degrees: float
-    rotations: Optional[int] = 0
-    raw_data: Optional[str] = None
-
-
-class ElbowDataCreate(ElbowDataBase):
+class PatientSessionCreate(PatientSessionBase):
     pass
 
-
-class ElbowDataResponse(ElbowDataBase):
+class PatientSessionResponse(PatientSessionBase):
     id: int
-    timestamp: datetime
+    started_at: datetime
 
     class Config:
         from_attributes = True
-from pydantic import BaseModel
-from datetime import datetime
-from typing import Optional
 
+# --- Elbow Data Schemas ---
 class ElbowDataBase(BaseModel):
+    session_id: int
     count: int
     angle_degrees: float
     rotations: Optional[int] = 0

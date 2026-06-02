@@ -1,19 +1,17 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
 
 try:
-    from . import models, schemas, services, database
+    from .database import engine, Base
+    from .routers import auth_router, users_router, sessions_router, telemetry_router, exercises_router
 except ImportError:
-    import models
-    import schemas
-    import services
-    import database
+    from database import engine, Base
+    from routers import auth_router, users_router, sessions_router, telemetry_router, exercises_router
 
 # Create database tables
-models.Base.metadata.create_all(bind=database.engine)
+Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Elbow Exoskeleton API")
+app = FastAPI(title="Elbow Exoskeleton API", version="1.0.0")
 
 # CORS Middleware
 app.add_middleware(
@@ -24,17 +22,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.post("/data/", response_model=schemas.ElbowDataResponse)
-def add_elbow_data(data: schemas.ElbowDataCreate, db: Session = Depends(database.get_db)):
-    """Send data from Arduino/Collector"""
-    return services.create_elbow_data(db=db, data=data)
-
-
-@app.get("/data/", response_model=list[schemas.ElbowDataResponse])
-def read_elbow_data(skip: int = 0, limit: int = 100, db: Session = Depends(database.get_db)):
-    """Get all stored data"""
-    return services.get_elbow_data(db, skip=skip, limit=limit)
-
+# Register routers
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(sessions_router)
+app.include_router(telemetry_router)
+app.include_router(exercises_router)
 
 @app.get("/")
 def home():

@@ -9,18 +9,24 @@ from datetime import datetime
 SERIAL_PORT = 'COM6'          
 BAUD_RATE = 115200
 
-# FastAPI Backend URL - Make sure this matches your running backend
-FASTAPI_URL = "http://127.0.0.1:8001/data/"   
+# FastAPI Backend URLs
+BASE_URL = "http://127.0.0.1:8001"
+FASTAPI_URL = f"{BASE_URL}/data/"   
+FASTAPI_SESSIONS_URL = f"{BASE_URL}/sessions/"
 
 # Create a persistent session for high-speed streaming
 session = requests.Session()
 # ==================================================
 
 # ================== 🌟 AUTOMATED SESSION SCRIPTING 🌟 ==================
-# 1. Ask for Patient ID or Session Name at the start of the test
+# 1. Ask for Patient ID and Session Name at the start of the test
 patient_id = input("👤 Enter Patient ID (e.g., P101, saumya): ").strip()
 if not patient_id:
     patient_id = "unknown_patient"
+
+session_name = input("📝 Enter Session Name (optional): ").strip()
+if not session_name:
+    session_name = f"Session_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
 
 # 2. Get today's date and time strings
 today_date = datetime.now().strftime("%Y_%m_%d")
@@ -36,6 +42,31 @@ raw_filename = os.path.join(session_dir, f"session_{today_date}_{time_str}_raw.c
 
 print(f"📁 Session localized! Saving parsed telemetry to: {csv_filename}")
 print(f"📁 Saving raw stream logs to: {raw_filename}")
+
+# 5. Connect to FastAPI backend to register the session
+session_id = None
+try:
+    print(f"📡 Registering session for Patient '{patient_id}' on backend: {FASTAPI_SESSIONS_URL} ...")
+    session_payload = {
+        "patient_id": patient_id,
+        "session_name": session_name,
+        "notes": f"Local CSV directory: {session_dir}"
+    }
+    response = requests.post(FASTAPI_SESSIONS_URL, json=session_payload, timeout=5)
+    if response.status_code == 200:
+        session_id = response.json().get("id")
+        print(f"✅ Session registered successfully! Database Session ID: {session_id}")
+    else:
+        print(f"❌ Failed to register session: {response.status_code} - {response.text}")
+        print("💡 Make sure FastAPI backend is running and the database is configured.")
+        raise RuntimeError("Session registration failed.")
+except requests.exceptions.ConnectionError:
+    print("❌ Cannot connect to backend. Is FastAPI still running on http://127.0.0.1:8001?")
+    print("💡 Please start the backend before running the data collector.")
+    raise SystemExit(1)
+except Exception as e:
+    print(f"❌ Error during session creation: {e}")
+    raise SystemExit(1)
 # =======================================================================
 
 # Open the files globally using your dynamic paths
@@ -85,6 +116,7 @@ try:
 
                         # ================== SEND TO BACKEND ==================
                         payload = {
+                            "session_id": session_id,
                             "count": count,
                             "angle_degrees": angle,
                             "rotations": rotations,
