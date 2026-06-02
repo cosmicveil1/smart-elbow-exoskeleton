@@ -1,57 +1,100 @@
-# 🦾 Elbow Exoskeleton - Real-Time Rehabilitation System
+# 🦾 Elbow Rehab Platform
 
-A smart, sensor-driven elbow exoskeleton system designed for **rehabilitation tracking, movement analysis, and assistive control**.
-
-Built in just **4 days** as a foundation, with plans to evolve into a complete multi-user rehabilitation platform.
+An intelligent **real-time elbow exoskeleton system** for rehabilitation tracking, exercise guidance, and assistive control. Built with a focus on clinical usability and future AI integration.
 
 ---
 
-## ✨ Features
+##  Project Vision
 
-### Current Implementation
-- **Real-time Encoder Data Collection** using high-resolution rotary encoder
-- **Live Data Streaming** from Arduino to backend
-- **FastAPI Backend** with clean architecture (Models, Services, Schemas)
-- **PostgreSQL Database** for reliable data storage
-- **Interactive Live Dashboard** with:
-  - Current Angle, Encoder Count, Range of Motion
-  - Average Movement Speed
-  - Real-time graphs (Angle & Raw Ticks)
-- **High-accuracy angle calculation** (8192 ticks per revolution)
-
-### Technical Stack
-- **Hardware**: Arduino + Rotary Encoder
-- **Backend**: FastAPI + SQLAlchemy
-- **Database**: PostgreSQL
-- **Frontend**: Streamlit (Live Dashboard with Plotly)
-- **Communication**: REST API + Serial Communication
+A complete rehabilitation platform that enables **Doctors** to prescribe exercises, **Patients** to perform guided therapy, and **Engineers** to monitor and optimize the system — all in real-time.
 
 ---
 
-## 📊 Project Highlights
+##  Current Features
 
-- Successfully built **full data pipeline**: Hardware → Backend → Database → Dashboard
-- Implemented **real-time metrics** (Range of Motion, Movement Speed)
-- Clean, maintainable codebase with proper separation of concerns
-- High-resolution movement tracking (8192 ticks/rotation)
+### Hardware & Data Acquisition
+- High-resolution rotary encoder (8192 ticks per revolution)
+- Real-time angle, count, and rotation tracking
+- Robust serial communication with Arduino
+
+### Backend & Data Pipeline
+- **FastAPI** backend with clean layered architecture
+- **PostgreSQL** database for reliable session storage
+- REST API for data ingestion and retrieval
+
+### Live Analytics Dashboard
+- Current angle, encoder count, and rotations
+- **Range of Motion** (Last 60 seconds)
+- **Average Movement Speed**
+- Real-time interactive graphs (Angle & Encoder Count)
+- Built with Streamlit (React frontend in progress)
 
 ---
 
-## 🎯 Future Vision (Next 2 Months)
+##  Tech Stack
 
-- **Multi-role System**: Doctor, Patient, and Engineer dashboards
-- **Exercise Management**: Doctors can create and assign exercises
-- **Patient Progress Tracking** with completion percentage
-- **Real-time WebSocket** support for multiple encoders
-- **Machine Learning** for movement classification and intention prediction
-- **React.js Frontend** for professional UI/UX
-- **Motor Control** for active assistance (Assist-as-Needed)
+- **Hardware**: Arduino Uno + Rotary Encoder
+- **Backend**: FastAPI + SQLAlchemy + PostgreSQL
+- **Dashboard**: Streamlit (migrating to React.js)
+- **Data Collection**: Python + PySerial
+- **Visualization**: Plotly
 
 ---
 
-## 🛠️ How to Run
+##  User Roles & Planned Features
 
-### Backend
+### Doctor Dashboard
+- Create and assign customized exercises
+- Monitor patient progress with % completion
+- View Range of Motion trends and session history
+- AI-powered clinical insights (planned)
+
+### Patient Dashboard
+- Guided exercise sessions with real-time feedback
+- Live angle and movement visualization
+- Progress tracking and motivational metrics
+- Pain reporting and session summary
+
+### Engineer Dashboard
+- Real-time system monitoring
+- Raw sensor data and diagnostics
+- Parameter tuning (future motor control)
+- Device calibration and firmware management
+
+---
+
+##  Future Roadmap
+
+### Near Term (Next 4–6 Weeks)
+- Full **React.js** frontend with role-based authentication
+- WebSocket support for true real-time updates
+- Exercise prescription & tracking system
+- Multi-encoder support
+
+### Medium Term
+- Motor control for **Assist-as-Needed** functionality
+- Machine Learning models for movement quality assessment
+- EMG sensor integration
+- Cloud synchronization
+
+### Long Term
+- Multi-joint support (shoulder + elbow)
+- Predictive recovery analytics
+- Tele-rehabilitation capabilities
+- Clinical trial readiness
+
+---
+
+##  How to Run (Development)
+
 ```bash
+# 1. Backend
 cd backend
 uvicorn main:app --reload --port 8001
+
+# 2. Data Collector
+cd collector
+python elbow_encoder.py
+
+# 3. Dashboard (Current)
+streamlit run dashboard.py
