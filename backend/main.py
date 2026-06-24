@@ -3,10 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 try:
     from .database import engine, Base
-    from .routers import auth_router, users_router, sessions_router, telemetry_router, exercises_router
+    from .routers import auth_router, users_router, sessions_router, telemetry_router, exercises_router, commands_router
 except ImportError:
     from database import engine, Base
-    from routers import auth_router, users_router, sessions_router, telemetry_router, exercises_router
+    from routers import auth_router, users_router, sessions_router, telemetry_router, exercises_router, commands_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -28,6 +28,7 @@ app.include_router(users_router)
 app.include_router(sessions_router)
 app.include_router(telemetry_router)
 app.include_router(exercises_router)
+app.include_router(commands_router)
 
 @app.get("/")
 def home():

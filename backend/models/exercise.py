@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
+# pyrefly: ignore [missing-import]
 from sqlalchemy.sql import func
 
 try:

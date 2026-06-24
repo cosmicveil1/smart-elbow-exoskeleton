@@ -13,9 +13,10 @@ class ElbowData(Base):
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(Integer, ForeignKey("patient_sessions.id", ondelete="CASCADE"), nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
-    count = Column(Integer)
+    target_angle = Column(Float, nullable=True)
     angle_degrees = Column(Float)
-    rotations = Column(Integer, default=0)
+    error = Column(Float, nullable=True)
+    motor_status = Column(Integer, default=0)
     raw_data = Column(String, nullable=True)
 
     # Relationships

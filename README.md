@@ -23,36 +23,44 @@ graph TD
         ORM <--> DB
     end
     
-    subgraph Collector [Python Serial Ingestion]
-        Script[pySerial Ingestion Script<br/>elbow_encoder.py]
+    subgraph Collector [Python Serial Bridge]
+        Script[pySerial Bridge Script<br/>elbow_encoder.py]
     end
     
     subgraph Hardware [Exoskeleton Hardware]
-        Arduino[Arduino Uno MCU<br/>+ Rotary Encoder 8192 ticks/rev]
+        Arduino[Arduino Uno MCU<br/>+ Rotary Encoder 8192 ticks/rev<br/>+ L298N Motor Driver]
     end
     
-    Doc -->|Axios REST Requests| Endpoints
-    Pat -->|Polls Telemetry| Endpoints
+    Doc -->|Axios REST Requests<br/>& Hardware Commands| Endpoints
+    Pat -->|Polls Telemetry<br/>& Hardware Commands| Endpoints
     Eng -->|Query Session Logs| Endpoints
     
-    Arduino -->|USB Serial COM6 @ 115200| Script
+    Arduino -->|USB Serial COM6 @ 115200<br/>Telemetry Stream| Script
+    Script -->|USB Serial<br/>Hardware Commands| Arduino
     Script -->|HTTP POST Telemetry| Endpoints
+    Endpoints -->|HTTP GET Pending Commands| Script
 ```
 
 
 ---
 
-## 2. End-to-End Data Flow
+## 2. End-to-End Two-Way Data Flow
 
-To explain the project clearly, the pipeline is divided into a single data point's journey:
+To explain the project clearly, the pipeline is divided into the Telemetry (Upload) and Command (Download) flows:
 
+### Telemetry Flow (Hardware -> Dashboard)
 1. **Generation:** The patient moves their elbow. The high-resolution rotary encoder generates ticks (8192 per revolution).
-2. **Microcontroller Ingestion:** The Arduino converts raw ticks into angle degrees and rotation direction, printing it to the serial line as: `count, angle, rotations`.
+2. **Microcontroller Ingestion:** The Arduino converts raw ticks into angle degrees and rotation direction, printing it to the serial line.
 3. **Data Collector Ingestion:** The Python script [elbow_encoder.py](collector/elbow_encoder.py) reads this stream via `pySerial` at 115200 baud, logs raw backup data to local CSV files, and sends an HTTP POST payload to the backend's `/data/` endpoint.
-4. **API & DB Save:** The FastAPI backend receives the JSON payload, validates it via a Pydantic schema (`ElbowDataCreate`), and saves it to the PostgreSQL `elbow_data` table using SQLAlchemy.
-5. **Real-time Display:**
-   - **React Frontend:** Fetches the active session data via Axios and displays it on the dashboards. The patient dashboard uses trigonometric calculations (`Math.cos`/`Math.sin`) to animate a skeletal elbow joint in SVG dynamically.
-   - **Streamlit Dashboard:** Queries the database directly or via requests, plotting motion graphs via Plotly in real-time.
+4. **API & DB Save:** The FastAPI backend receives the JSON payload and saves it to the PostgreSQL `elbow_data` table.
+5. **Real-time Display:** Both Doctor and Patient React Dashboards display the data using Live Recharts Line Graphs and SVG Skeletal Arm animations.
+
+### Hardware Control Flow (Dashboard -> Hardware)
+1. **Doctor/Patient Command:** A user clicks "Set Target Angle", "Zero Sensor", or "Emergency Stop" on the React Dashboard.
+2. **PostgreSQL Queue:** FastAPI saves the command into the `commands` SQL table with a status of `pending`.
+3. **Python Bridge Polling:** A background thread in `elbow_encoder.py` polls `GET /commands/pending` every 1 second.
+4. **Serial Execution:** The Python script downloads the pending command, marks it as `executed` via `PUT /commands/{id}/execute`, and translates it into a byte string (e.g., `t90.0\n`, `s\n`, `c\n`) sent down the USB cable to the Arduino.
+5. **Hardware Response:** The Arduino parses the byte string, disables interrupts if necessary (for calibration), and engages the L298N motor driver using dynamic macro-PWM logic to reach the target angle.
 
 ---
 
@@ -67,11 +75,13 @@ To explain the project clearly, the pipeline is divided into a single data point
   - `PatientExercise` (Prescription): Intermediary table mapping Exercises to Patients, including status and completion percentage.
   - `PatientSession`: Grouping of telemetry points for a single physical workout.
   - `ElbowData`: Telemetry records (ticks count, angle, rotations, timestamp).
+  - `CommandQueue`: Two-way persistent audit log for hardware commands (Target Angle, Stop, Zero Sensor).
 * **schemas directory:** Pydantic models used to validate request payloads (inputs) and serialize database responses (outputs). Separates concerns (e.g. `UserCreate` has a password, while `UserResponse` excludes it for security).
 * **routers directory:** Defines API endpoints:
   - `/auth/login`: Verifies user password hash against database and returns a signed JWT access token.
   - `/exercises/`: Enables doctors to define new routines (`POST`) and assign/prescribe them (`POST /prescriptions`).
   - `/users/patients`: Returns all patients (restricted to doctors and engineers).
+  - `/commands/`: Exposes hardware queue endpoints for the UI to submit commands and the Python bridge to poll them.
 * **services directory:** Handles core logic:
   - `auth.py`: Uses `bcrypt` for secure, salted password hashing and `PyJWT` to generate stateless JWT tokens.
 
@@ -152,13 +162,20 @@ The login screen contains a role quick-selector that pre-populates these default
   - VCC $\rightarrow$ 5V, GND $\rightarrow$ GND
   - Phase A $\rightarrow$ Digital Pin 2 (Interrupt-driven)
   - Phase B $\rightarrow$ Digital Pin 3
+* **Motor Driver (L298N):**
+  - ENA/ENB $\rightarrow$ Digital Pins 5, 6 (PWM)
+  - IN1-IN4 $\rightarrow$ Digital Pins 8-11
 * **Arduino Uno:** Streams serial data over USB (identified on `COM6`).
 
-### Serial Protocol
-* **Arduino $\rightarrow$ Ingestion Collector (100 Hz):**
+### Serial Protocol (Two-Way)
+* **Arduino $\rightarrow$ Python Bridge (100 Hz Telemetry):**
   `count,angle_degrees,rotations`
   *(Example payload: `19192,123.40,2`)*
-* **Ingestion Collector $\rightarrow$ FastAPI Endpoint (`POST /data/`):**
+* **Python Bridge $\rightarrow$ Arduino (Hardware Commands):**
+  - `t{float}\n` $\rightarrow$ Set Target Angle (e.g. `t90.0\n`)
+  - `s\n` $\rightarrow$ Emergency Stop Motor
+  - `c\n` $\rightarrow$ Zero Calibration (Reset Encoder count)
+* **Python Bridge $\rightarrow$ FastAPI Endpoint (`POST /data/`):**
   ```json
   {
     "session_id": 4,

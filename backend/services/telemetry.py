@@ -10,9 +10,10 @@ def create_elbow_data(db: Session, data: schemas.ElbowDataCreate):
     """Store a single telemetry reading associated with a session"""
     db_data = models.ElbowData(
         session_id=data.session_id,
-        count=data.count,
+        target_angle=data.target_angle,
         angle_degrees=data.angle_degrees,
-        rotations=data.rotations,
+        error=data.error,
+        motor_status=data.motor_status,
         raw_data=data.raw_data
     )
     db.add(db_data)

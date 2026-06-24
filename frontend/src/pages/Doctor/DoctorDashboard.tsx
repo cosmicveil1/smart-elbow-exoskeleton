@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import axios from 'axios';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { AlertOctagon, Crosshair } from 'lucide-react';
 
 const API_BASE = "http://localhost:8001";
 
@@ -46,6 +48,10 @@ const DoctorDashboard = () => {
   const [newExTargetAngle, setNewExTargetAngle] = useState('90');
   const [newExTargetValue, setNewExTargetValue] = useState('9.0');
   const [newExDuration, setNewExDuration] = useState('60');
+
+  // Live Telemetry & Control State
+  const [telemetry, setTelemetry] = useState<any[]>([]);
+  const [manualTarget, setManualTarget] = useState('90');
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
@@ -95,6 +101,33 @@ const DoctorDashboard = () => {
       loadPatientDetails();
     }
   }, [selectedPatient]);
+
+  // Poll live telemetry every second
+  useEffect(() => {
+    if (!selectedPatient) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await axios.get(`${API_BASE}/data/?limit=30`);
+        // Reverse so chronological order is left to right
+        setTelemetry(res.data.reverse());
+      } catch (e) {}
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [selectedPatient]);
+
+  const sendCommand = async (type: string, value: number | null = null) => {
+    if (!selectedPatient) return;
+    try {
+      await axios.post(`${API_BASE}/commands/`, {
+        patient_id: selectedPatient.id,
+        command_type: type,
+        value: value
+      });
+      // Silent success for UI fluidity
+    } catch (e) {
+      console.error("Failed to send command");
+    }
+  };
 
   const handleCreateExercise = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -203,6 +236,69 @@ const DoctorDashboard = () => {
                   <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold uppercase">Active Rehab</span>
                 </div>
                 
+                {/* LIVE TELEMETRY & HARDWARE CONTROL */}
+                <div className="bg-gray-900 rounded-xl p-5 text-white shadow-inner my-4">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="font-bold text-lg flex items-center gap-2">
+                      <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
+                      Live Hardware Control
+                    </h4>
+                    
+                    <div className="flex gap-3">
+                      <button 
+                        onClick={() => sendCommand('ZERO')}
+                        className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-xl flex items-center gap-2 shadow-lg transition"
+                      >
+                        <Crosshair size={20} />
+                        Zero Sensor
+                      </button>
+                      <button 
+                        onClick={() => sendCommand('STOP')}
+                        className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-xl flex items-center gap-2 shadow-lg transition transform hover:scale-105 active:scale-95 border border-red-400"
+                      >
+                        <AlertOctagon size={20} />
+                        EMERGENCY STOP
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="h-64 w-full bg-gray-800 rounded-lg p-2 mb-4 border border-gray-700">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={telemetry} margin={{ top: 5, right: 20, bottom: 5, left: -20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#4B5563" vertical={false} />
+                        <XAxis dataKey="id" stroke="#9CA3AF" tick={false} axisLine={false} />
+                        <YAxis stroke="#9CA3AF" domain={[0, 150]} axisLine={false} tickLine={false} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px', color: '#fff' }} 
+                          itemStyle={{ fontWeight: 'bold' }}
+                        />
+                        <Legend wrapperStyle={{ paddingTop: '10px' }} />
+                        <Line type="monotone" dataKey="target_angle" stroke="#10B981" strokeWidth={3} dot={false} name="Target Angle" />
+                        <Line type="monotone" dataKey="angle_degrees" stroke="#6366F1" strokeWidth={3} dot={false} name="Current Angle" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <div className="relative">
+                      <input 
+                        type="number" 
+                        className="bg-gray-800 border border-gray-700 text-white px-4 py-2 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none w-32 font-mono"
+                        value={manualTarget}
+                        onChange={(e) => setManualTarget(e.target.value)}
+                        placeholder="Angle"
+                      />
+                      <span className="absolute right-4 top-2 text-gray-400">°</span>
+                    </div>
+                    <button 
+                      onClick={() => sendCommand('TARGET_ANGLE', parseFloat(manualTarget))}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-xl transition shadow-lg"
+                    >
+                      Set Target Angle
+                    </button>
+                  </div>
+                </div>
+
                 <div className="text-sm bg-gray-50 p-4 rounded-xl border border-gray-100 text-gray-600">
                   <strong>Notes:</strong> {selectedPatient.clinical_info || "No diagnostic details provided."}
                 </div>

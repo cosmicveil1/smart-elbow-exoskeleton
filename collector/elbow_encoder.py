@@ -3,6 +3,7 @@ import serial
 import time
 import csv
 import requests
+import threading
 from datetime import datetime
 
 # ================== CONFIGURATION ==================
@@ -13,6 +14,7 @@ BAUD_RATE = 115200
 BASE_URL = "http://127.0.0.1:8001"
 FASTAPI_URL = f"{BASE_URL}/data/"   
 FASTAPI_SESSIONS_URL = f"{BASE_URL}/sessions/"
+FASTAPI_COMMANDS_URL = f"{BASE_URL}/commands/"
 
 # Create a persistent session for high-speed streaming
 session = requests.Session()
@@ -20,7 +22,7 @@ session = requests.Session()
 
 # ================== 🌟 AUTOMATED SESSION SCRIPTING 🌟 ==================
 # 1. Ask for Patient ID and Session Name at the start of the test
-patient_id = input("👤 Enter Patient ID (e.g., P101, saumya): ").strip()
+patient_id = input("👤 Enter Patient ID (e.g., 2 for John Doe): ").strip()
 if not patient_id:
     patient_id = "unknown_patient"
 
@@ -76,17 +78,50 @@ raw_file = open(raw_filename, 'w', newline='', encoding="utf-8")
 csv_writer = csv.writer(csv_file)
 raw_writer = csv.writer(raw_file)
 
-csv_writer.writerow(["Timestamp", "Count", "Angle_Degrees", "Rotations"])
+csv_writer.writerow(["Timestamp", "Target_Angle", "Current_Angle", "Error", "Motor_Status"])
 raw_writer.writerow(["Timestamp", "Raw_Data"])
 
 print(f"✅ Trying to connect to Arduino on {SERIAL_PORT}...")
 print(f"📡 Sending data to FastAPI: {FASTAPI_URL}")
+
+def command_polling_thread(ser_port):
+    """Background thread to poll FastAPI for new commands and push them to the Arduino."""
+    while True:
+        try:
+            res = requests.get(f"{FASTAPI_COMMANDS_URL}pending", timeout=3)
+            if res.status_code == 200:
+                commands = res.json()
+                for cmd in commands:
+                    cmd_id = cmd["id"]
+                    ctype = cmd["command_type"]
+                    cval = cmd["value"]
+
+                    if ctype == "TARGET_ANGLE":
+                        ser_port.write(f"t{cval}\n".encode('utf-8'))
+                        print(f"⚡ [COMMAND QUEUE] Sent Target Angle: {cval}° to Arduino")
+                    elif ctype == "STOP":
+                        ser_port.write(b"s\n")
+                        print(f"🚨 [COMMAND QUEUE] EMERGENCY STOP SENT TO ARDUINO")
+                    elif ctype == "ZERO":
+                        ser_port.write(b"c\n")
+                        print(f"🎯 [COMMAND QUEUE] SENSOR CALIBRATED TO ZERO")
+                    
+                    # Mark executed
+                    requests.put(f"{FASTAPI_COMMANDS_URL}{cmd_id}/execute", timeout=3)
+        except Exception as e:
+            pass # Silently ignore connection errors during polling to avoid console spam
+        time.sleep(1)
 
 try:
     ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
     time.sleep(2)
 
     print("✅ Successfully connected to Arduino!")
+    
+    # Start the command polling background thread
+    cmd_thread = threading.Thread(target=command_polling_thread, args=(ser,), daemon=True)
+    cmd_thread.start()
+    
     print("📡 Live data is being sent to backend...\n")
     print("Move the elbow joint...\n")
 
@@ -104,39 +139,51 @@ try:
                 raw_writer.writerow([timestamp, data])
 
                 # Parse and send to FastAPI
-                if "," in data:
+                if "|" in data:
                     try:
-                        parts = data.split(",")
-                        count = int(parts[0].strip())
-                        angle = float(parts[1].strip())
-                        rotations = int(parts[2].strip()) if len(parts) > 2 else 0
-
-                        # Save to local CSV (Uses the same writer variable!)
-                        csv_writer.writerow([timestamp, count, angle, rotations])
-
-                        # ================== SEND TO BACKEND ==================
-                        payload = {
-                            "session_id": session_id,
-                            "count": count,
-                            "angle_degrees": angle,
-                            "rotations": rotations,
-                            "raw_data": data
-                        }
-
-                        try:
-                            response = session.post(FASTAPI_URL, json=payload, timeout=3)
+                        parts = data.split("|")
+                        if len(parts) >= 3:
+                            # Slice off the text (e.g. "Target: 90.0" -> 90.0)
+                            target = float(parts[0].split(":")[1].strip())
+                            current = float(parts[1].split(":")[1].strip())
+                            error = float(parts[2].split(":")[1].strip())
                             
-                            if response.status_code == 200:
-                                print("✅ Sent to backend successfully")
-                            else:
-                                print(f"⚠️ Backend Error: {response.status_code} - {response.text}")
-                        except requests.exceptions.ConnectionError:
-                            print("❌ Cannot connect to backend. Is FastAPI still running?")
-                        except requests.exceptions.Timeout:
-                            print("❌ Request timeout - Backend is slow or not responding")
-                        except Exception as e:
-                            print(f"❌ Request failed: {e}")
-                        # ====================================================
+                            # Parse the motor status into an ML-friendly integer (0=Stopped, 1=Coast, 2=Pulse)
+                            motor_status = 0
+                            if len(parts) >= 4:
+                                status_text = parts[3].strip()
+                                if "ON" in status_text:
+                                    motor_status = 2
+                                elif "OFF" in status_text:
+                                    motor_status = 1
+
+                            # Save to local CSV
+                            csv_writer.writerow([timestamp, target, current, error, motor_status])
+
+                            # ================== SEND TO BACKEND ==================
+                            payload = {
+                                "session_id": session_id,
+                                "target_angle": target,
+                                "angle_degrees": current,
+                                "error": error,
+                                "motor_status": motor_status,
+                                "raw_data": data
+                            }
+
+                            try:
+                                response = session.post(FASTAPI_URL, json=payload, timeout=3)
+                                
+                                if response.status_code == 200:
+                                    print("✅ Sent to backend successfully")
+                                else:
+                                    print(f"⚠️ Backend Error: {response.status_code} - {response.text}")
+                            except requests.exceptions.ConnectionError:
+                                print("❌ Cannot connect to backend. Is FastAPI still running?")
+                            except requests.exceptions.Timeout:
+                                print("❌ Request timeout - Backend is slow or not responding")
+                            except Exception as e:
+                                print(f"❌ Request failed: {e}")
+                            # ====================================================
 
                     except ValueError:
                         print("⚠️ Could not parse data (wrong format)")

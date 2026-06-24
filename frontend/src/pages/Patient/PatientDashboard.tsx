@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import axios from 'axios';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { AlertOctagon } from 'lucide-react';
 
 const API_BASE = "http://localhost:8001";
 
@@ -41,8 +43,21 @@ const PatientDashboard = () => {
   const [simStatusText, setSimStatusText] = useState('Idle');
   const [simAutoPlay, setSimAutoPlay] = useState(true);
   const [simSessionId, setSimSessionId] = useState<number | null>(null);
+  const [telemetryHistory, setTelemetryHistory] = useState<any[]>([]);
 
   const simTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const sendCommand = async (type: string, value: number | null = null) => {
+    try {
+      await axios.post(`${API_BASE}/commands/`, {
+        patient_id: 2,
+        command_type: type,
+        value: value
+      });
+    } catch (e) {
+      console.error("Failed to send command", e);
+    }
+  };
 
   const loadPatientData = async () => {
     try {
@@ -85,6 +100,7 @@ const PatientDashboard = () => {
     setSimulating(true);
     setSimProgress(0);
     setSimAngle(0);
+    setTelemetryHistory([]);
     setSimDurationLeft(selectedPrescription.exercise.duration_seconds || 60);
     setSimStatusText("Starting calibration session...");
 
@@ -144,6 +160,12 @@ const PatientDashboard = () => {
         setSimStatusText(`Flex elbow to target: ${targetAngle}° (Current: ${currentAngleToEvaluate.toFixed(1)}°)`);
       }
 
+      setTelemetryHistory(prev => {
+        const newHist = [...prev, { time: prev.length, current: currentAngleToEvaluate, target: targetAngle }];
+        if (newHist.length > 50) newHist.shift();
+        return newHist;
+      });
+
       const formattedProgress = Math.round(currentCompleteness);
       setSimProgress(formattedProgress);
 
@@ -196,6 +218,7 @@ const PatientDashboard = () => {
     setSimulating(true);
     setSimProgress(0);
     setSimAngle(0);
+    setTelemetryHistory([]);
     setSimDurationLeft(selectedPrescription.exercise.duration_seconds || 60);
     setSimStatusText("Listening to live exoskeleton feed...");
 
@@ -231,6 +254,12 @@ const PatientDashboard = () => {
           } else {
             setSimStatusText(`Move exo to target: ${targetAngle}° (Current: ${currentAngle.toFixed(1)}°)`);
           }
+
+          setTelemetryHistory(prev => {
+            const newHist = [...prev, { time: prev.length, current: currentAngle, target: targetAngle }];
+            if (newHist.length > 50) newHist.shift();
+            return newHist;
+          });
         } else {
           setSimStatusText("Waiting for serial packets from Arduino...");
         }
@@ -441,6 +470,59 @@ const PatientDashboard = () => {
                         <div>Live Session ID: <strong>#{selectedSessionId}</strong></div>
                       )}
                     </div>
+                  </div>
+                </div>
+
+                {/* Live Graph & Safety Controls */}
+                <div className="bg-gray-900 p-4 rounded-2xl border border-gray-800 space-y-3 relative overflow-hidden shadow-inner">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></div>
+                      <h4 className="text-white font-bold text-sm tracking-wide">Live Performance Telemetry</h4>
+                    </div>
+                    
+                    <button 
+                      onClick={() => sendCommand('STOP')}
+                      className="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-4 rounded-lg flex items-center gap-2 shadow-lg transition transform hover:scale-105 active:scale-95 border border-red-400 text-xs"
+                    >
+                      <AlertOctagon size={16} />
+                      EMERGENCY STOP
+                    </button>
+                  </div>
+
+                  <div className="h-48 w-full bg-gray-800/50 rounded-lg p-2 border border-gray-700">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={telemetryHistory}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                        <XAxis dataKey="time" hide />
+                        <YAxis domain={[-20, 150]} stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 10 }} width={30} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc' }}
+                          itemStyle={{ fontWeight: 'bold' }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
+                        <Line 
+                          type="monotone" 
+                          dataKey="current" 
+                          name="Current Angle" 
+                          stroke="#8b5cf6" 
+                          strokeWidth={2.5}
+                          dot={false}
+                          activeDot={{ r: 4, fill: "#8b5cf6", stroke: "#fff" }} 
+                          isAnimationActive={false}
+                        />
+                        <Line 
+                          type="stepAfter" 
+                          dataKey="target" 
+                          name="Target Angle" 
+                          stroke="#10b981" 
+                          strokeWidth={2}
+                          strokeDasharray="5 5"
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
 

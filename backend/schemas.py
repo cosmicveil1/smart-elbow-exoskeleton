@@ -22,9 +22,10 @@ class PatientSessionResponse(PatientSessionBase):
 # --- Elbow Data Schemas ---
 class ElbowDataBase(BaseModel):
     session_id: int
-    count: int
+    target_angle: float
     angle_degrees: float
-    rotations: Optional[int] = 0
+    error: float
+    motor_status: int
     raw_data: Optional[str] = None
 
 class ElbowDataCreate(ElbowDataBase):
