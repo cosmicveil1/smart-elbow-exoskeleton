@@ -8,7 +8,7 @@ except ImportError:
     from database import get_db
     import schemas
     import services
-    from auth import get_current_user
+    from .auth import get_current_user
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 

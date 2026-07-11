@@ -5,7 +5,7 @@ try:
 except ImportError:
     import models
     import schemas
-    from auth import get_password_hash
+    from .auth import get_password_hash
 
 def get_user_by_id(db: Session, user_id: int):
     """Retrieve user by database ID"""

@@ -1,6 +1,8 @@
 # 🦾 Smart Elbow Exoskeleton Rehabilitation Platform
 
-An intelligent, clinical-grade IoT telemetry platform designed for physical therapy tracking, exercise prescription, and real-time kinematic visual feedback. Built for researchers, clinicians, and engineers to collaborate on data-driven patient recovery.
+**"An intelligent, clinical-grade IoT telemetry platform that analyzes kinematic telemetry to classify movement quality, detect abnormal rehabilitation sessions, and support adaptive therapy decisions."**
+
+Built for researchers, clinicians, and engineers to collaborate on data-driven patient recovery, this project combines low-latency IoT hardware control with a robust React-based clinical dashboard and an advanced Machine Learning data pipeline.
 
 ---
 
@@ -46,7 +48,7 @@ graph TD
 
 ## 2. End-to-End Two-Way Data Flow
 
-To explain the project clearly, the pipeline is divided into the Telemetry (Upload) and Command (Download) flows:
+The platform pipeline is divided into the Telemetry (Upload) and Command (Download) flows:
 
 ### Telemetry Flow (Hardware -> Dashboard)
 1. **Generation:** The patient moves their elbow. The high-resolution rotary encoder generates ticks (8192 per revolution).
@@ -60,56 +62,73 @@ To explain the project clearly, the pipeline is divided into the Telemetry (Uplo
 2. **PostgreSQL Queue:** FastAPI saves the command into the `commands` SQL table with a status of `pending`.
 3. **Python Bridge Polling:** A background thread in `elbow_encoder.py` polls `GET /commands/pending` every 1 second.
 4. **Serial Execution:** The Python script downloads the pending command, marks it as `executed` via `PUT /commands/{id}/execute`, and translates it into a byte string (e.g., `t90.0\n`, `s\n`, `c\n`) sent down the USB cable to the Arduino.
-5. **Hardware Response:** The Arduino parses the byte string, disables interrupts if necessary (for calibration), and engages the L298N motor driver using dynamic macro-PWM logic to reach the target angle.
+5. **Hardware Response:** The Arduino parses the byte string and engages the L298N motor driver using dynamic macro-PWM logic to reach the target angle.
 
 ---
 
-## 3. Explaining Key Files by Folder
+## 3. Data Engineering & ML Telemetry Pipeline
+
+Unlike raw IoT projects, this platform is designed specifically to generate high-variance, clinically relevant Machine Learning datasets for anomaly detection and physical therapy scoring.
+
+### Telemetry Schema
+The Python ingestion script (`elbow_encoder.py`) parses the raw serial string and writes structured time-series data directly to local CSVs and PostgreSQL:
+`id, session_name, timestamp, target_angle, current_angle, error, motor_status`
+
+> **Note:** The `motor_status` column captures the precise Macro-PWM pulse timing of the motor (ON vs Coast vs Stopped). This serves as a highly predictive feature for mechanical stalling, separating intentional rest from hardware failure.
+
+### Data Collection Strategy
+To prevent model overfitting, data is collected across distinct, isolated sessions covering multiple operational classes:
+- **Normal Dynamics:** Short/long movements, stepping, and holding.
+- **Simulated Anomalies:** 
+  - **Frozen Joint / Mechanical Jam:** Motor pulses actively, but encoder remains flat.
+  - **Patient Resistance:** Motor pulses actively, but movement is heavily constrained.
+  - **Emergency Stops:** Sudden velocity drops triggered via software interrupt.
+
+### Feature Extraction Pipeline
+Raw time-series rows are converted into robust rolling windows to extract physics-based features, providing the ML models with true mechanical context:
+- `Mean Error`, `Max Error`, `Velocity`, `Acceleration`, `Error Variance`, `Overshoot`, `Settling Time`
+
+---
+
+## 4. Machine Learning Roadmap
+
+The platform's data strategy directly supports a 4-Stage Machine Learning pipeline to transform raw kinematics into adaptive therapy recommendations:
+
+* **Stage 1: Movement Classification (RandomForest / XGBoost)**
+  - Classifies the current movement type (e.g., Short Step, Long Swing, Hold, Jam, Resistance).
+* **Stage 2: Anomaly Detection (Isolation Forest)**
+  - Trained exclusively on normal telemetry to mathematically isolate and flag dangerous deviations (e.g., motor jamming or sudden patient resistance) acting as a proactive, sub-millisecond safety layer.
+* **Stage 3: Movement Quality Scoring (Regression)**
+  - Grades the patient's exercise execution on a 0-100 scale based on smoothness, overshoot, and velocity profiles.
+* **Stage 4: Adaptive Therapy Recommendation Engine**
+  - Uses the Quality Score to prescribe the next clinical action (e.g., "Increase Range of Motion", "Maintain", or "Decrease Difficulty").
+
+---
+
+## 5. Explaining Key Files by Folder
 
 ### 📂 Backend (FastAPI Server)
-* **[main.py](backend/main.py):** The API entry point. Initializes database tables, sets up CORS middleware, and registers the routers.
-* **[database.py](backend/database.py) / [database/connection.py](backend/database/connection.py):** Contains the SQLAlchemy configuration. Creates the database engine, defines `SessionLocal` to handle transactions, and exports `get_db()` as a dependency resolver.
-* **models directory:** Defines database tables as Python classes:
-  - `User`: Handles accounts (username, hashed password, role: doctor/patient/engineer).
-  - `Exercise`: Contains exercise templates (name, mode: position/force/torque, target angle).
-  - `PatientExercise` (Prescription): Intermediary table mapping Exercises to Patients, including status and completion percentage.
-  - `PatientSession`: Grouping of telemetry points for a single physical workout.
-  - `ElbowData`: Telemetry records (ticks count, angle, rotations, timestamp).
-  - `CommandQueue`: Two-way persistent audit log for hardware commands (Target Angle, Stop, Zero Sensor).
-* **schemas directory:** Pydantic models used to validate request payloads (inputs) and serialize database responses (outputs). Separates concerns (e.g. `UserCreate` has a password, while `UserResponse` excludes it for security).
-* **routers directory:** Defines API endpoints:
-  - `/auth/login`: Verifies user password hash against database and returns a signed JWT access token.
-  - `/exercises/`: Enables doctors to define new routines (`POST`) and assign/prescribe them (`POST /prescriptions`).
-  - `/users/patients`: Returns all patients (restricted to doctors and engineers).
-  - `/commands/`: Exposes hardware queue endpoints for the UI to submit commands and the Python bridge to poll them.
-* **services directory:** Handles core logic:
-  - `auth.py`: Uses `bcrypt` for secure, salted password hashing and `PyJWT` to generate stateless JWT tokens.
+* **[main.py](backend/main.py):** The API entry point. Initializes database tables, sets up CORS middleware, and registers routers.
+* **[database.py](backend/database.py):** Contains the SQLAlchemy configuration and PostgreSQL connection.
+* **models directory:** Defines database tables (Users, Exercises, Prescriptions, Sessions, Telemetry).
+* **routers directory:** Defines API endpoints for authentication, commands, and clinical data.
+* **services directory:** Handles core logic (e.g., bcrypt password hashing and JWT token generation).
 
 ### 📂 Ingestion Collector (Python IoT Script)
 * **[elbow_encoder.py](collector/elbow_encoder.py):**
-  - Connects to the Arduino via `serial.Serial('COM6', 115200)`.
-  - Prompts for Patient ID, registers a new session on the backend (`POST /sessions/`), and obtains a `session_id`.
-  - Runs an infinite loop reading the port. Parses comma-separated payloads, writes a local raw CSV backup, and pushes structured data to `/data/` in a separate thread.
+  - Connects to the Arduino via `pySerial`.
+  - Runs an infinite loop reading the port, logging raw CSV data, and pushing structured data to the backend.
 
 ### 📂 Frontend (React TypeScript)
-* **[AuthContext.tsx](frontend/src/context/AuthContext.tsx):** A React Context hook. It manages global authentication state (login status and user role) and keeps credentials persisted in `localStorage` across page refreshes.
-* **[App.tsx](frontend/src/App.tsx):** Sets up routing using `react-router-dom`. Features a `<ProtectedRoute>` wrapper that redirects unauthenticated users to `/login` and blocks patients from accessing the doctor or engineer portals.
-* **[DoctorDashboard.tsx](frontend/src/pages/Doctor/DoctorDashboard.tsx):**
-  - Displays the active doctor's name as "Dr. John Doe".
-  - Fetches patients and their prescriptions checklist dynamically using Axios.
-  - Features forms to create predefined template routines and prescribe them to patients.
-* **[PatientDashboard.tsx](frontend/src/pages/Patient/PatientDashboard.tsx):**
-  - Displays assigned exercises and targets (mode, target angle, duration).
-  - **SVG joint visualizer:** Draws a 2D arm model dynamically using trigonometry:
-    $$\text{armX} = 120 + 80 \times \cos(\theta), \quad \text{armY} = 100 - 80 \times \sin(\theta)$$
-  - Offers dual mode selection (Simulator mode with Auto-Sweep vs. Exoskeleton Live Serial Feed mode polling real-time PostgreSQL database).
+* **[AuthContext.tsx](frontend/src/context/AuthContext.tsx):** Manages global authentication state and role-based access control.
+* **[DoctorDashboard.tsx](frontend/src/pages/Doctor/DoctorDashboard.tsx):** Fetches patients and their prescriptions, allowing doctors to create new routines.
+* **[PatientDashboard.tsx](frontend/src/pages/Patient/PatientDashboard.tsx):** Displays an interactive SVG joint visualizer drawing a 2D arm model dynamically using real-time serial feed trigonometry.
 
 ---
 
-## 4. Quick Start
+## 6. Quick Start
 
 ### 1. Install Dependencies
-Make sure you have your virtual environment activated:
 ```bash
 # Python dependencies
 pip install fastapi uvicorn sqlalchemy psycopg2 requests pyserial python-dotenv PyJWT bcrypt pandas plotly streamlit
@@ -126,93 +145,28 @@ venv\Scripts\python.exe -m backend.seed
 ```
 
 ### 3. Start the Platform
-
-* **FastAPI Backend:**
-  ```bash
-  venv\Scripts\python.exe -m uvicorn backend.main:app --port 8001
-  ```
-* **React Frontend:**
-  ```bash
-  cd frontend
-  npm start
-  ```
-* **Streamlit Dashboard (Optional Fallback):**
-  ```bash
-  venv\Scripts\python.exe -m streamlit run dashboard.py
-  ```
+* **FastAPI Backend:** `venv\Scripts\python.exe -m uvicorn backend.main:app --port 8001`
+* **React Frontend:** `cd frontend && npm start`
 
 ---
 
-## 5. Dashboard Roles & Logins
-
-The login screen contains a role quick-selector that pre-populates these default accounts:
+## 7. Dashboard Roles & Logins
 
 | Role | Username | Password | Key Features |
 | :--- | :--- | :--- | :--- |
-| **Doctor** | `doctor` | `password` | Searchable patient list, clinical notes, exercise prescription dropdown, exercise template creator. No option to delete prescriptions. |
-| **Patient** | `patient` | `password` | Prescribed routines, target metrics, interactive SVG arm joint simulator, dual-mode selector (Simulator/Exoskeleton COM6). |
-| **Engineer** | `engineer` | `password` | Hardware connection stats (COM6 status, baud rate), database logs list, raw telemetry diagnostics table. |
+| **Doctor** | `doctor` | `password` | Searchable patient list, clinical notes, exercise prescription dropdown, exercise template creator. |
+| **Patient** | `patient` | `password` | Prescribed routines, target metrics, interactive SVG arm joint simulator, dual-mode selector. |
+| **Engineer** | `engineer` | `password` | Hardware connection stats, database logs list, raw telemetry diagnostics table. |
 
 ---
 
-## 6. Exoskeleton Wiring & Serial Protocol
+## 8. Exoskeleton Wiring & Serial Protocol
 
 ### Hardware Setup
-* **Rotary Encoder (8192 ticks/revolution):**
-  - VCC $\rightarrow$ 5V, GND $\rightarrow$ GND
-  - Phase A $\rightarrow$ Digital Pin 2 (Interrupt-driven)
-  - Phase B $\rightarrow$ Digital Pin 3
-* **Motor Driver (L298N):**
-  - ENA/ENB $\rightarrow$ Digital Pins 5, 6 (PWM)
-  - IN1-IN4 $\rightarrow$ Digital Pins 8-11
+* **Rotary Encoder (8192 ticks/revolution):** Phase A $\rightarrow$ D2 (Interrupt), Phase B $\rightarrow$ D3
+* **Motor Driver (L298N):** ENA/ENB $\rightarrow$ D5, D6 (PWM), IN1-IN4 $\rightarrow$ D8-11
 * **Arduino Uno:** Streams serial data over USB (identified on `COM6`).
 
 ### Serial Protocol (Two-Way)
-* **Arduino $\rightarrow$ Python Bridge (100 Hz Telemetry):**
-  `count,angle_degrees,rotations`
-  *(Example payload: `19192,123.40,2`)*
-* **Python Bridge $\rightarrow$ Arduino (Hardware Commands):**
-  - `t{float}\n` $\rightarrow$ Set Target Angle (e.g. `t90.0\n`)
-  - `s\n` $\rightarrow$ Emergency Stop Motor
-  - `c\n` $\rightarrow$ Zero Calibration (Reset Encoder count)
-* **Python Bridge $\rightarrow$ FastAPI Endpoint (`POST /data/`):**
-  ```json
-  {
-    "session_id": 4,
-    "count": 19192,
-    "angle_degrees": 123.4,
-    "rotations": 2,
-    "raw_data": "19192,123.40,2"
-  }
-  ```
-
----
-
-## 7. Future Work & AI Expansion
-
-* **FFT Tremor Analysis:** Apply Fast Fourier Transform (FFT) on incoming joint angle frequencies to identify muscle tremors (3–8 Hz bands) during range of motion exercises.
-* **Surface EMG Integration:** Combine muscle activity tracking (e.g. AD8232 or Myoware EMG sensors) to compare motor effort against joint movement degrees.
-* **Assist-as-Needed Control:** Integrate a motor driver (e.g. L298N H-Bridge) to adjust active torque parameters dynamically based on muscle fatigue.
-* **Predictive Recovery Scoring:** Use Machine Learning regression models to compute a recovery outcome trajectory score based on historical exercise progress.
-
----
-
-## 8. systemd Service Configuration
-To deploy the backend on a Linux system or server, save the following as `/etc/systemd/system/elbow_backend.service`:
-
-```ini
-[Unit]
-Description=Smart Elbow Exoskeleton FastAPI Backend
-After=network.target
-
-[Service]
-User=pi
-WorkingDirectory=/home/pi/smart-elbow-exoskeleton/backend
-ExecStart=/home/pi/smart-elbow-exoskeleton/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8001
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-Enable the service using: `sudo systemctl enable --now elbow_backend`
+* **Arduino $\rightarrow$ Python Bridge (100 Hz Telemetry):** `Target: 90.0 | Current: 45.0 | Error: 45.0 | ⚡ ON (Pulse)`
+* **Python Bridge $\rightarrow$ Arduino (Commands):** `t90.0\n` (Set Target), `s\n` (Stop), `c\n` (Calibrate)

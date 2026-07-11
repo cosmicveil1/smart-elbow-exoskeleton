@@ -11,7 +11,7 @@ SERIAL_PORT = 'COM6'
 BAUD_RATE = 115200
 
 # FastAPI Backend URLs
-BASE_URL = "http://127.0.0.1:8001"
+BASE_URL = "http://127.0.0.1:8000"
 FASTAPI_URL = f"{BASE_URL}/data/"   
 FASTAPI_SESSIONS_URL = f"{BASE_URL}/sessions/"
 FASTAPI_COMMANDS_URL = f"{BASE_URL}/commands/"

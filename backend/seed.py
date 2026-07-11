@@ -61,9 +61,11 @@ def seed_database():
                 
         print("\n--- Seeding Exercises ---")
         exercises_to_seed = [
+            # ELBOW EXERCISES
             {
                 "name": "Active Flexion Extension",
                 "description": "Actively flex and extend your elbow joint to a target angle of 90 degrees.",
+                "joint": "Elbow",
                 "mode": "position",
                 "target_angle": 90.0,
                 "target_value": 90.0,
@@ -72,6 +74,7 @@ def seed_database():
             {
                 "name": "Isometric Strength Hold",
                 "description": "Hold the joint at 45 degrees while exerting a target motor torque of 5.0 Nm.",
+                "joint": "Elbow",
                 "mode": "torque",
                 "target_angle": 45.0,
                 "target_value": 5.0,
@@ -80,10 +83,77 @@ def seed_database():
             {
                 "name": "Passive ROM Stretching",
                 "description": "Relax your muscles and let the exoskeleton guide your joint up to 120 degrees.",
+                "joint": "Elbow",
                 "mode": "position",
                 "target_angle": 120.0,
                 "target_value": 120.0,
                 "duration_seconds": 90
+            },
+            # WRIST EXERCISES
+            {
+                "name": "Wrist Flexion / Extension",
+                "description": "Palm facing down on table. Lift hand upward and lower downward.",
+                "joint": "Wrist",
+                "mode": "position",
+                "target_angle": 70.0,
+                "target_value": 70.0,
+                "duration_seconds": 60
+            },
+            {
+                "name": "Radial / Ulnar Deviation",
+                "description": "Move the hand side-to-side toward the thumb and little finger.",
+                "joint": "Wrist",
+                "mode": "position",
+                "target_angle": 30.0,
+                "target_value": 30.0,
+                "duration_seconds": 60
+            },
+            {
+                "name": "Pronation / Supination",
+                "description": "Elbow bent to 90 degrees. Rotate palm upward and downward.",
+                "joint": "Wrist",
+                "mode": "position",
+                "target_angle": 90.0,
+                "target_value": 90.0,
+                "duration_seconds": 90
+            },
+            # SHOULDER EXERCISES
+            {
+                "name": "Forward Reach (Flexion)",
+                "description": "Lift arm straight forward until overhead.",
+                "joint": "Shoulder",
+                "mode": "position",
+                "target_angle": 180.0,
+                "target_value": 180.0,
+                "duration_seconds": 60
+            },
+            {
+                "name": "Lateral Raise (Abduction)",
+                "description": "Raise arm sideways.",
+                "joint": "Shoulder",
+                "mode": "position",
+                "target_angle": 180.0,
+                "target_value": 180.0,
+                "duration_seconds": 60
+            },
+            {
+                "name": "Internal / External Rotation",
+                "description": "Elbow bent 90 degrees. Rotate forearm inward and outward.",
+                "joint": "Shoulder",
+                "mode": "position",
+                "target_angle": 90.0,
+                "target_value": 90.0,
+                "duration_seconds": 60
+            },
+            # COMBINED EXERCISES
+            {
+                "name": "Reach-and-Grasp",
+                "description": "Functional training combining multiple joints.",
+                "joint": "Combined",
+                "mode": "position",
+                "target_angle": 0.0,
+                "target_value": 0.0,
+                "duration_seconds": 120
             }
         ]
         
@@ -104,7 +174,8 @@ def seed_database():
                 doctor_id=doctor.id, 
                 assignment=schemas.PatientExerciseCreate(
                     patient_id=patient.id,
-                    exercise_id=ex.id
+                    exercise_id=ex.id,
+                    target_cycles=5
                 )
             )
             print(f"Prescribed exercise '{ex.name}' to Patient '{patient.full_name}'")

@@ -10,6 +10,7 @@ def create_exercise(db: Session, exercise: schemas.ExerciseCreate):
     db_exercise = models.Exercise(
         name=exercise.name,
         description=exercise.description,
+        joint=exercise.joint,
         mode=exercise.mode,
         target_angle=exercise.target_angle,
         target_value=exercise.target_value,
@@ -34,6 +35,7 @@ def assign_exercise_to_patient(db: Session, doctor_id: int, assignment: schemas.
         patient_id=assignment.patient_id,
         exercise_id=assignment.exercise_id,
         assigned_by=doctor_id,
+        target_cycles=assignment.target_cycles,
         status="assigned",
         completion_percentage=0.0
     )

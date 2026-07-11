@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import axios from 'axios';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { AlertOctagon, Crosshair } from 'lucide-react';
 
-const API_BASE = "http://localhost:8001";
+const API_BASE = "http://localhost:8000";
 
 interface Patient {
   id: number;
@@ -19,6 +19,7 @@ interface Exercise {
   name: string;
   description: string | null;
   mode: string;
+  joint: string;
   target_angle: number;
   target_value: number;
   duration_seconds: number;
@@ -40,10 +41,12 @@ const DoctorDashboard = () => {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [selectedExerciseId, setSelectedExerciseId] = useState<string>('');
+  const [prescribeTargetCycles, setPrescribeTargetCycles] = useState('5');
 
   // Create exercise states
   const [newExName, setNewExName] = useState('');
   const [newExDesc, setNewExDesc] = useState('');
+  const [newExJoint, setNewExJoint] = useState('Elbow');
   const [newExMode, setNewExMode] = useState('position');
   const [newExTargetAngle, setNewExTargetAngle] = useState('90');
   const [newExTargetValue, setNewExTargetValue] = useState('9.0');
@@ -52,6 +55,9 @@ const DoctorDashboard = () => {
   // Live Telemetry & Control State
   const [telemetry, setTelemetry] = useState<any[]>([]);
   const [manualTarget, setManualTarget] = useState('90');
+  const [manualCycles, setManualCycles] = useState('1');
+  const [cycleStatus, setCycleStatus] = useState('');
+  const manualControlRef = useRef<NodeJS.Timeout | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
@@ -117,6 +123,13 @@ const DoctorDashboard = () => {
 
   const sendCommand = async (type: string, value: number | null = null) => {
     if (!selectedPatient) return;
+    
+    // If user clicked Emergency Stop or Zero, cancel any running manual cycles
+    if (type === 'STOP' || type === 'ZERO') {
+      if (manualControlRef.current) clearInterval(manualControlRef.current);
+      setCycleStatus('');
+    }
+
     try {
       await axios.post(`${API_BASE}/commands/`, {
         patient_id: selectedPatient.id,
@@ -129,6 +142,55 @@ const DoctorDashboard = () => {
     }
   };
 
+  const executeManualCycles = async () => {
+    if (!selectedPatient) return;
+    
+    const targetAngle = parseFloat(manualTarget);
+    const targetCycles = parseInt(manualCycles);
+    let cycleCount = 0;
+    let cyclePhase = 0; // 0 = flex to target, 1 = return to 0
+    let minAngle = 0;
+
+    if (manualControlRef.current) clearInterval(manualControlRef.current);
+    
+    setCycleStatus(`Cycle 1/${targetCycles} | Phase: Flexing`);
+    sendCommand('TARGET_ANGLE', targetAngle);
+
+    manualControlRef.current = setInterval(async () => {
+      try {
+        const res = await axios.get(`${API_BASE}/data/?limit=1`);
+        if (res.data && res.data.length > 0) {
+          const currentAngle = res.data[0].angle_degrees;
+          const targetForPhase = cyclePhase === 0 ? targetAngle : minAngle;
+          const isTargetMet = Math.abs(currentAngle - targetForPhase) <= 8;
+
+          if (isTargetMet) {
+            if (cyclePhase === 0) {
+              cyclePhase = 1;
+              sendCommand('TARGET_ANGLE', minAngle);
+            } else {
+              cycleCount += 1;
+              if (cycleCount >= targetCycles) {
+                if (manualControlRef.current) clearInterval(manualControlRef.current);
+                setCycleStatus(`All ${targetCycles} cycles completed!`);
+                return;
+              } else {
+                cyclePhase = 0;
+                sendCommand('TARGET_ANGLE', targetAngle);
+              }
+            }
+          }
+          
+          if (cycleCount < targetCycles) {
+            setCycleStatus(`Cycle ${cycleCount + 1}/${targetCycles} | Phase: ${cyclePhase === 0 ? 'Flexing' : 'Returning'} | Angle: ${currentAngle.toFixed(1)}°`);
+          }
+        }
+      } catch (e) {
+        console.warn("Failed to poll for cycle data");
+      }
+    }, 1000);
+  };
+
   const handleCreateExercise = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newExName) return;
@@ -137,6 +199,7 @@ const DoctorDashboard = () => {
       await axios.post(`${API_BASE}/exercises/`, {
         name: newExName,
         description: newExDesc,
+        joint: newExJoint,
         mode: newExMode,
         target_angle: parseFloat(newExTargetAngle),
         target_value: parseFloat(newExTargetValue),
@@ -160,7 +223,8 @@ const DoctorDashboard = () => {
     try {
       await axios.post(`${API_BASE}/exercises/prescriptions`, {
         patient_id: selectedPatient.id,
-        exercise_id: parseInt(selectedExerciseId)
+        exercise_id: parseInt(selectedExerciseId),
+        target_cycles: parseInt(prescribeTargetCycles)
       });
       setMsg("Prescribed successfully!");
       loadPatientDetails();
@@ -279,23 +343,48 @@ const DoctorDashboard = () => {
                     </ResponsiveContainer>
                   </div>
 
-                  <div className="flex gap-3">
-                    <div className="relative">
-                      <input 
-                        type="number" 
-                        className="bg-gray-800 border border-gray-700 text-white px-4 py-2 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none w-32 font-mono"
-                        value={manualTarget}
-                        onChange={(e) => setManualTarget(e.target.value)}
-                        placeholder="Angle"
-                      />
-                      <span className="absolute right-4 top-2 text-gray-400">°</span>
+                  <div className="flex flex-col gap-3">
+                    <div className="flex gap-3">
+                      <div className="relative">
+                        <input 
+                          type="number" 
+                          className="bg-gray-800 border border-gray-700 text-white px-4 py-2 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none w-32 font-mono"
+                          value={manualTarget}
+                          onChange={(e) => setManualTarget(e.target.value)}
+                          placeholder="Angle"
+                        />
+                        <span className="absolute right-4 top-2 text-gray-400">°</span>
+                      </div>
+                      <div className="relative">
+                        <input 
+                          type="number" 
+                          className="bg-gray-800 border border-gray-700 text-white px-4 py-2 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none w-32 font-mono"
+                          value={manualCycles}
+                          onChange={(e) => setManualCycles(e.target.value)}
+                          placeholder="Cycles"
+                        />
+                        <span className="absolute right-4 top-2 text-gray-400">x</span>
+                      </div>
                     </div>
-                    <button 
-                      onClick={() => sendCommand('TARGET_ANGLE', parseFloat(manualTarget))}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-xl transition shadow-lg"
-                    >
-                      Set Target Angle
-                    </button>
+                    <div className="flex gap-3">
+                      <button 
+                        onClick={() => sendCommand('TARGET_ANGLE', parseFloat(manualTarget))}
+                        className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-xl transition shadow-lg flex-1"
+                      >
+                        Set Angle Once
+                      </button>
+                      <button 
+                        onClick={executeManualCycles}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-xl transition shadow-lg flex-1"
+                      >
+                        Execute Cycles
+                      </button>
+                    </div>
+                    {cycleStatus && (
+                      <div className="text-sm font-semibold text-indigo-400 mt-2 bg-gray-800/50 p-2 rounded-lg border border-gray-700 text-center">
+                        {cycleStatus}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -332,10 +421,17 @@ const DoctorDashboard = () => {
                     >
                       {exercises.map(ex => (
                         <option key={ex.id} value={ex.id}>
-                          {ex.name} ({ex.mode} | {ex.target_angle}°)
+                          [{ex.joint}] {ex.name} ({ex.mode})
                         </option>
                       ))}
                     </select>
+                    <input 
+                      type="number"
+                      className="w-20 px-3 py-2 border rounded-xl text-xs focus:ring-2 focus:ring-indigo-500"
+                      value={prescribeTargetCycles}
+                      onChange={(e) => setPrescribeTargetCycles(e.target.value)}
+                      placeholder="Cycles"
+                    />
                     <button 
                       type="submit" 
                       className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer"
@@ -380,6 +476,30 @@ const DoctorDashboard = () => {
                 value={newExDesc} 
                 onChange={(e) => setNewExDesc(e.target.value)}
               />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Duration (s)</label>
+              <input 
+                type="number"
+                className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-2 focus:ring-indigo-500"
+                value={newExDuration}
+                onChange={(e) => setNewExDuration(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">Joint</label>
+              <select 
+                className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-2 focus:ring-indigo-500"
+                value={newExJoint}
+                onChange={(e) => setNewExJoint(e.target.value)}
+              >
+                <option value="Wrist">Wrist</option>
+                <option value="Elbow">Elbow</option>
+                <option value="Shoulder">Shoulder</option>
+                <option value="Combined">Combined</option>
+              </select>
             </div>
 
             <div>

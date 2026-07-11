@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import axios from 'axios';
 
-const API_BASE = "http://localhost:8001";
+const API_BASE = "http://localhost:8000";
 
 interface Session {
   id: number;

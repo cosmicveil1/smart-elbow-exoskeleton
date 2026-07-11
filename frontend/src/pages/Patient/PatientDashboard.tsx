@@ -4,13 +4,14 @@ import axios from 'axios';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { AlertOctagon } from 'lucide-react';
 
-const API_BASE = "http://localhost:8001";
+const API_BASE = "http://localhost:8000";
 
 interface Exercise {
   id: number;
   name: string;
   description: string | null;
   mode: string;
+  joint: string;
   target_angle: number;
   target_value: number;
   duration_seconds: number;
@@ -22,13 +23,16 @@ interface Prescription {
   exercise_id: number;
   status: string;
   completion_percentage: number;
+  assigned_at: string;
   exercise: Exercise;
+  target_cycles: number;
 }
 
 const PatientDashboard = () => {
   const { logout } = useAuth();
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [selectedPrescription, setSelectedPrescription] = useState<Prescription | null>(null);
+  const [activeJointTab, setActiveJointTab] = useState<string>('Elbow');
 
   // Connection mode selection: 'simulator' | 'live'
   const [demoMode, setDemoMode] = useState<'simulator' | 'live'>('simulator');
@@ -122,14 +126,31 @@ const PatientDashboard = () => {
 
     const duration = selectedPrescription.exercise.duration_seconds || 60;
     const targetAngle = selectedPrescription.exercise.target_angle;
+    const exerciseName = selectedPrescription.exercise.name;
+    let maxAngle = targetAngle;
+    let minAngle = 0;
     
+    if (exerciseName.includes("Pronation")) {
+      maxAngle = 180;
+      minAngle = 0;
+    } else if (exerciseName.includes("Deviation")) {
+      maxAngle = 30;
+      minAngle = -20;
+    } else if (exerciseName.includes("Rotation")) {
+      maxAngle = 90;
+      minAngle = -70;
+    }
+
+    const targetCycles = selectedPrescription.target_cycles || 1;
     let ticks = 0;
     let currentCompleteness = 0;
+    let cycleCount = 0;
+    let cyclePhase = 0; // 0 = flex to target, 1 = return to minAngle
 
     if (simTimerRef.current) clearInterval(simTimerRef.current);
 
     let sweepDirection = 1;
-    let localAngle = 0;
+    let localAngle = minAngle;
 
     simTimerRef.current = setInterval(async () => {
       ticks += 1;
@@ -140,24 +161,38 @@ const PatientDashboard = () => {
       if (simAutoPlay) {
         if (sweepDirection === 1) {
           localAngle += 6;
-          if (localAngle >= targetAngle + 10) sweepDirection = -1;
+          if (localAngle >= maxAngle) sweepDirection = -1;
         } else {
           localAngle -= 6;
-          if (localAngle <= 0) sweepDirection = 1;
+          if (localAngle <= minAngle) sweepDirection = 1;
         }
         setSimAngle(localAngle);
       }
 
-      // Proximity check
+      // Proximity check based on phase
       const currentAngleToEvaluate = simAutoPlay ? localAngle : simAngle;
-      const angleDelta = Math.abs(currentAngleToEvaluate - targetAngle);
+      const targetForPhase = cyclePhase === 0 ? maxAngle : minAngle;
+      const angleDelta = Math.abs(currentAngleToEvaluate - targetForPhase);
       const isTargetMet = angleDelta <= 8; // tolerance band
 
       if (isTargetMet) {
-        currentCompleteness = Math.min(100, currentCompleteness + (100 / (duration / 2.5))); 
-        setSimStatusText(`🎯 Target matched! Angle: ${currentAngleToEvaluate.toFixed(1)}°`);
+        if (cyclePhase === 0) {
+          cyclePhase = 1;
+        } else {
+          cycleCount += 1;
+          if (cycleCount >= targetCycles) {
+            currentCompleteness = 100;
+          } else {
+            cyclePhase = 0;
+          }
+        }
+      }
+
+      if (cycleCount < targetCycles) {
+        setSimStatusText(`Cycle ${cycleCount + 1}/${targetCycles} | Phase: ${cyclePhase === 0 ? 'Flexing' : 'Returning'} | Angle: ${currentAngleToEvaluate.toFixed(1)}°`);
+        currentCompleteness = Math.min(100, (cycleCount / targetCycles) * 100 + (cyclePhase === 1 ? (50/targetCycles) : 0));
       } else {
-        setSimStatusText(`Flex elbow to target: ${targetAngle}° (Current: ${currentAngleToEvaluate.toFixed(1)}°)`);
+        setSimStatusText(`🎯 All ${targetCycles} simulated cycles complete!`);
       }
 
       setTelemetryHistory(prev => {
@@ -224,12 +259,25 @@ const PatientDashboard = () => {
 
     const duration = selectedPrescription.exercise.duration_seconds || 60;
     const targetAngle = selectedPrescription.exercise.target_angle;
+    const targetCycles = selectedPrescription.target_cycles || 1;
     const sessionId = parseInt(selectedSessionId);
+    const exerciseName = selectedPrescription.exercise.name;
+    
+    let minAngle = 0;
+    if (exerciseName.includes("Deviation")) minAngle = -20;
+    if (exerciseName.includes("Rotation")) minAngle = -70;
 
     let ticks = 0;
     let currentCompleteness = 0;
+    let cycleCount = 0;
+    let cyclePhase = 0; // 0 = Moving to target, 1 = Returning to minAngle
 
     if (simTimerRef.current) clearInterval(simTimerRef.current);
+
+    // Initial command to hardware
+    try {
+      await axios.post(`${API_BASE}/commands/`, { command_type: 'TARGET_ANGLE', value: targetAngle });
+    } catch(e) { console.error("Initial target command failed", e) }
 
     simTimerRef.current = setInterval(async () => {
       ticks += 1;
@@ -244,15 +292,37 @@ const PatientDashboard = () => {
           const currentAngle = latestPoint.angle_degrees;
           setSimAngle(currentAngle);
 
-          // Proximity check
-          const angleDelta = Math.abs(currentAngle - targetAngle);
+          // Proximity check for current phase
+          const targetForPhase = cyclePhase === 0 ? targetAngle : minAngle;
+          const angleDelta = Math.abs(currentAngle - targetForPhase);
           const isTargetMet = angleDelta <= 8; // tolerance band
 
           if (isTargetMet) {
-            currentCompleteness = Math.min(100, currentCompleteness + (100 / (duration / 2.5)));
-            setSimStatusText(`🎯 Target matched! Exo Angle: ${currentAngle.toFixed(1)}°`);
+            if (cyclePhase === 0) {
+              // Reached max target. Now go back to minAngle.
+              cyclePhase = 1;
+              try {
+                await axios.post(`${API_BASE}/commands/`, { command_type: 'TARGET_ANGLE', value: minAngle });
+              } catch(e) {}
+            } else {
+              // Reached minAngle. One full cycle complete.
+              cycleCount += 1;
+              if (cycleCount >= targetCycles) {
+                currentCompleteness = 100;
+              } else {
+                cyclePhase = 0;
+                try {
+                  await axios.post(`${API_BASE}/commands/`, { command_type: 'TARGET_ANGLE', value: targetAngle });
+                } catch(e) {}
+              }
+            }
+          }
+          
+          if (cycleCount < targetCycles) {
+            setSimStatusText(`Cycle ${cycleCount + 1}/${targetCycles} | Phase: ${cyclePhase === 0 ? 'Flexing' : 'Returning'} | Exo Angle: ${currentAngle.toFixed(1)}°`);
+            currentCompleteness = Math.min(100, (cycleCount / targetCycles) * 100 + (cyclePhase === 1 ? (50/targetCycles) : 0));
           } else {
-            setSimStatusText(`Move exo to target: ${targetAngle}° (Current: ${currentAngle.toFixed(1)}°)`);
+            setSimStatusText(`All ${targetCycles} cycles complete!`);
           }
 
           setTelemetryHistory(prev => {
@@ -315,11 +385,28 @@ const PatientDashboard = () => {
     }
   };
 
-  // SVGArm dynamic geometry
+  // Dynamic geometry based on joint type
+  const jointType = selectedPrescription?.exercise.joint || 'Elbow';
+  const exerciseName = selectedPrescription?.exercise.name || '';
+  const movingLength = jointType === 'Wrist' ? 45 : (jointType === 'Shoulder' ? 85 : 80);
   const targetAngleVal = selectedPrescription?.exercise.target_angle || 90;
-  const angleRad = (simAngle * Math.PI) / 180;
-  const armX = 120 + 80 * Math.cos(angleRad);
-  const armY = 100 - 80 * Math.sin(angleRad);
+  
+  let visualAngleOffset = 0;
+  if (jointType === 'Shoulder') {
+    if (exerciseName.includes("Rotation")) {
+      visualAngleOffset = 90; // Top-Down view, neutral points UP
+    } else {
+      visualAngleOffset = -90; // Flexion/Abduction starts pointing DOWN
+    }
+  } else if (jointType === 'Wrist' && exerciseName.includes("Deviation")) {
+    visualAngleOffset = -90; // Top down view starts pointing down
+  }
+
+  const angleRad = ((simAngle + visualAngleOffset) * Math.PI) / 180;
+  const armX = 120 + movingLength * Math.cos(angleRad);
+  const armY = 100 - movingLength * Math.sin(angleRad);
+
+  const filteredPrescriptions = prescriptions.filter(p => p.exercise.joint === activeJointTab);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -354,8 +441,30 @@ const PatientDashboard = () => {
           {/* Exercises Sidebar list */}
           <div className="bg-white p-5 rounded-2xl shadow flex flex-col gap-4">
             <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider border-b pb-3">My Routines</h3>
-            <div className="space-y-3">
-              {prescriptions.map(pres => (
+            
+            {/* Joint Tabs */}
+            <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+              {['Wrist', 'Elbow', 'Shoulder'].map(joint => (
+                <button
+                  key={joint}
+                  onClick={() => {
+                    setActiveJointTab(joint);
+                    // Optionally clear selection if switching joints
+                    // setSelectedPrescription(null); 
+                  }}
+                  className={`flex-1 text-xs font-semibold py-1.5 rounded-lg transition-all ${
+                    activeJointTab === joint
+                      ? 'bg-white text-indigo-600 shadow'
+                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  {joint}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-3 mt-2">
+              {filteredPrescriptions.map(pres => (
                 <div 
                   key={pres.id}
                   onClick={() => {
@@ -379,8 +488,8 @@ const PatientDashboard = () => {
                   </div>
                 </div>
               ))}
-              {prescriptions.length === 0 && (
-                <p className="text-gray-400 text-xs text-center py-4">No exercises prescribed.</p>
+              {filteredPrescriptions.length === 0 && (
+                <p className="text-gray-400 text-xs text-center py-4">No routines for {activeJointTab}.</p>
               )}
             </div>
           </div>
@@ -401,9 +510,9 @@ const PatientDashboard = () => {
                     <div className="text-xl font-extrabold text-indigo-600 mt-1">{selectedPrescription.exercise.target_angle}°</div>
                   </div>
                   <div className="p-4 bg-gray-50 border border-gray-100 rounded-2xl text-center">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase">Target Value</div>
+                    <div className="text-[10px] font-bold text-gray-400 uppercase">Target Cycles</div>
                     <div className="text-xl font-extrabold text-indigo-600 mt-1">
-                      {selectedPrescription.exercise.target_value} ({selectedPrescription.exercise.mode})
+                      {selectedPrescription.target_cycles}
                     </div>
                   </div>
                   <div className="p-4 bg-gray-50 border border-gray-100 rounded-2xl text-center">
@@ -420,28 +529,111 @@ const PatientDashboard = () => {
                       <svg width="240" height="200" viewBox="0 0 240 200">
                         {/* Sector target arc */}
                         {(() => {
-                          const targetRad = (targetAngleVal * Math.PI) / 180;
+                          const startRad = (visualAngleOffset * Math.PI) / 180;
+                          const targetRad = ((targetAngleVal + visualAngleOffset) * Math.PI) / 180;
+                          
+                          const startX = 120 + 70 * Math.cos(startRad);
+                          const startY = 100 - 70 * Math.sin(startRad);
+                          const endX = 120 + 70 * Math.cos(targetRad);
+                          const endY = 100 - 70 * Math.sin(targetRad);
+                          
                           return (
                             <path 
-                              d={`M 120 100 L 190 100 A 70 70 0 0 0 ${120 + 70 * Math.cos(targetRad)} ${100 - 70 * Math.sin(targetRad)} Z`} 
+                              d={`M 120 100 L ${startX} ${startY} A 70 70 0 0 0 ${endX} ${endY} Z`} 
                               fill="rgba(79, 70, 229, 0.12)" 
                               stroke="rgba(79, 70, 229, 0.3)" 
                             />
                           );
                         })()}
 
-                        {/* Static upper arm segments */}
-                        <line x1="50" y1="100" x2="120" y2="100" stroke="#334155" strokeWidth="12" strokeLinecap="round" />
-                        <circle cx="50" cy="100" r="8" fill="#475569" />
+                        {/* Viewport label */}
+                        <text x="10" y="20" fill="#94a3b8" fontSize="10" fontWeight="bold">
+                          {(selectedPrescription?.exercise.name.includes("Deviation") || selectedPrescription?.exercise.name.includes("Rotation")) ? "[Top-Down View]" : 
+                           selectedPrescription?.exercise.name.includes("Pronation") ? "[Axial Rotation View]" :
+                           selectedPrescription?.exercise.name.includes("Abduction") ? "[Frontal View]" :
+                           "[Side Profile View]"}
+                        </text>
+
+                        {/* Conditionally render static parts based on joint and exercise */}
+                        {jointType === 'Shoulder' ? (
+                          <>
+                            {selectedPrescription?.exercise.name.includes("Rotation") ? (
+                              <>
+                                {/* Top-Down View: Head and shoulders */}
+                                <circle cx="120" cy="150" r="20" fill="#475569" />
+                                <line x1="60" y1="100" x2="120" y2="100" stroke="#334155" strokeWidth="24" strokeLinecap="round" />
+                                <text x="120" y="155" textAnchor="middle" fill="#0f172a" fontSize="14" fontWeight="bold">T</text>
+                              </>
+                            ) : selectedPrescription?.exercise.name.includes("Abduction") ? (
+                              <>
+                                {/* Frontal View: Draw other shoulder and head in middle */}
+                                <line x1="80" y1="100" x2="120" y2="100" stroke="#334155" strokeWidth="24" strokeLinecap="round" />
+                                <circle cx="100" cy="50" r="20" fill="#475569" />
+                                <line x1="100" y1="70" x2="100" y2="100" stroke="#334155" strokeWidth="12" />
+                                {/* Torso */}
+                                <line x1="120" y1="100" x2="120" y2="190" stroke="#334155" strokeWidth="24" strokeLinecap="round" />
+                              </>
+                            ) : (
+                              <>
+                                {/* Side View: Head directly above */}
+                                <circle cx="120" cy="50" r="20" fill="#475569" />
+                                <line x1="120" y1="70" x2="120" y2="100" stroke="#334155" strokeWidth="12" />
+                                {/* Torso */}
+                                <line x1="120" y1="100" x2="120" y2="190" stroke="#334155" strokeWidth="24" strokeLinecap="round" />
+                              </>
+                            )}
+                          </>
+                        ) : jointType === 'Wrist' ? (
+                          <>
+                            {selectedPrescription?.exercise.name.includes("Deviation") ? (
+                              <>
+                                {/* Top-down view: Forearm comes from the bottom */}
+                                <line x1="120" y1="200" x2="120" y2="100" stroke="#334155" strokeWidth="16" strokeLinecap="round" />
+                                <circle cx="120" cy="200" r="10" fill="#475569" />
+                              </>
+                            ) : selectedPrescription?.exercise.name.includes("Pronation") ? (
+                              <>
+                                {/* Axial View: Forearm coming out of screen */}
+                                <circle cx="120" cy="100" r="25" fill="#334155" />
+                                <circle cx="120" cy="100" r="15" fill="#475569" />
+                                {/* Rotational Arrow graphic */}
+                                <path d="M 90 100 A 30 30 0 1 1 150 100" fill="none" stroke="#64748b" strokeWidth="2" strokeDasharray="4 4" />
+                                <polygon points="150,100 145,95 155,95" fill="#64748b" />
+                              </>
+                            ) : (
+                              <>
+                                {/* Side profile: Forearm horizontal */}
+                                <line x1="20" y1="100" x2="120" y2="100" stroke="#334155" strokeWidth="16" strokeLinecap="round" />
+                                <circle cx="20" cy="100" r="10" fill="#475569" />
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            {/* Upper Arm (Default Elbow) */}
+                            <line x1="50" y1="100" x2="120" y2="100" stroke="#334155" strokeWidth="12" strokeLinecap="round" />
+                            <circle cx="50" cy="100" r="8" fill="#475569" />
+                          </>
+                        )}
                         
                         {/* Center joint pivot */}
                         <circle cx="120" cy="100" r="16" fill="#0f172a" stroke="#4f46e5" strokeWidth="3" />
                         <circle cx="120" cy="100" r="6" fill="#4f46e5" />
 
-                        {/* Moving forearm */}
-                        <line x1="120" y1="100" x2={armX} y2={armY} stroke="#4f46e5" strokeWidth="10" strokeLinecap="round" />
-                        <line x1="120" y1="100" x2={armX} y2={armY} stroke="#ffffff" strokeWidth="3" strokeLinecap="round" />
-                        <circle cx={armX} cy={armY} r="5" fill="#ec4899" />
+                        {/* Moving segment */}
+                        <line 
+                          x1="120" y1="100" x2={armX} y2={armY} 
+                          stroke="#4f46e5" 
+                          strokeWidth={jointType === 'Wrist' ? 14 : 10} 
+                          strokeLinecap="round" 
+                        />
+                        <line 
+                          x1="120" y1="100" x2={armX} y2={armY} 
+                          stroke="#ffffff" 
+                          strokeWidth="3" 
+                          strokeLinecap="round" 
+                        />
+                        <circle cx={armX} cy={armY} r={jointType === 'Wrist' ? 7 : 5} fill="#ec4899" />
 
                         {/* Labels */}
                         <text x="120" y="165" textAnchor="middle" fill="#fff" fontSize="12" fontWeight="bold">
@@ -495,7 +687,13 @@ const PatientDashboard = () => {
                       <LineChart data={telemetryHistory}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
                         <XAxis dataKey="time" hide />
-                        <YAxis domain={[-20, 150]} stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 10 }} width={30} />
+                        <YAxis 
+                          domain={[-30, Math.max(150, targetAngleVal + 20)]} 
+                          stroke="#94a3b8" 
+                          tick={{ fill: '#94a3b8', fontSize: 10 }} 
+                          width={40} 
+                          label={{ value: 'Angle (°)', angle: -90, position: 'insideLeft', fill: '#94a3b8', fontSize: 10 }}
+                        />
                         <Tooltip 
                           contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc' }}
                           itemStyle={{ fontWeight: 'bold' }}
