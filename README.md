@@ -53,9 +53,9 @@ The platform pipeline is divided into the Telemetry (Upload) and Command (Downlo
 ### Telemetry Flow (Hardware -> Dashboard)
 1. **Generation:** The patient moves their elbow. The high-resolution rotary encoder generates ticks (8192 per revolution).
 2. **Microcontroller Ingestion:** The Arduino converts raw ticks into angle degrees and rotation direction, printing it to the serial line.
-3. **Data Collector Ingestion:** The Python script [elbow_encoder.py](collector/elbow_encoder.py) reads this stream via `pySerial` at 115200 baud, logs raw backup data to local CSV files, and sends an HTTP POST payload to the backend's `/data/` endpoint.
+3. **Data Collector Ingestion:** The Python script [elbow_encoder.py](collector/elbow_encoder.py) reads this stream via `pySerial` at 115200 baud, logs raw backup data to local CSV files, and sends an HTTP POST payload to the backend's `/data/` endpoint. This script implements an asynchronous, multi-threaded bi-directional IoT communication bridge to handle high-frequency telemetry without dropping packets.
 4. **API & DB Save:** The FastAPI backend receives the JSON payload and saves it to the PostgreSQL `elbow_data` table.
-5. **Real-time Display:** Both Doctor and Patient React Dashboards display the data using Live Recharts Line Graphs and SVG Skeletal Arm animations.
+5. **Real-time Display:** Both Doctor and Patient React Dashboards display the data using Live Recharts Line Graphs and dynamic SVG Skeletal Arm animations.
 
 ### Hardware Control Flow (Dashboard -> Hardware)
 1. **Doctor/Patient Command:** A user clicks "Set Target Angle", "Zero Sensor", or "Emergency Stop" on the React Dashboard.
@@ -84,24 +84,26 @@ To prevent model overfitting, data is collected across distinct, isolated sessio
   - **Patient Resistance:** Motor pulses actively, but movement is heavily constrained.
   - **Emergency Stops:** Sudden velocity drops triggered via software interrupt.
 
-### Feature Extraction Pipeline
-Raw time-series rows are converted into robust rolling windows to extract physics-based features, providing the ML models with true mechanical context:
+### Feature Extraction Pipeline & Tooling
+To prepare this data for training, I developed custom Python tooling (`crop.py`, `split_session.py`, `export_ml_data.py`) to automate the cropping, splitting, and normalization of time-series sessions. Raw time-series rows are converted into robust rolling windows to extract physics-based features, providing the ML models with true mechanical context:
 - `Mean Error`, `Max Error`, `Velocity`, `Acceleration`, `Error Variance`, `Overshoot`, `Settling Time`
 
 ---
 
-## 4. Machine Learning Roadmap
+## 4. Machine Learning Roadmap (Future Work)
 
-The platform's data strategy directly supports a 4-Stage Machine Learning pipeline to transform raw kinematics into adaptive therapy recommendations:
+**Status:** *During my internship, I successfully built the end-to-end IoT telemetry platform, React dashboard, and full data pipeline. We have successfully collected and structured the high-variance datasets required for ML. The following 4-stage ML pipeline is planned as my next phase of work.*
+
+The platform's data strategy is designed to support a 4-Stage Machine Learning pipeline that will transform our raw kinematics dataset into adaptive therapy recommendations:
 
 * **Stage 1: Movement Classification (RandomForest / XGBoost)**
-  - Classifies the current movement type (e.g., Short Step, Long Swing, Hold, Jam, Resistance).
+  - Classify the current movement type (e.g., Short Step, Long Swing, Hold, Jam, Resistance).
 * **Stage 2: Anomaly Detection (Isolation Forest)**
-  - Trained exclusively on normal telemetry to mathematically isolate and flag dangerous deviations (e.g., motor jamming or sudden patient resistance) acting as a proactive, sub-millisecond safety layer.
+  - Train exclusively on normal telemetry to mathematically isolate and flag dangerous deviations (e.g., motor jamming or sudden patient resistance) acting as a proactive, sub-millisecond safety layer.
 * **Stage 3: Movement Quality Scoring (Regression)**
-  - Grades the patient's exercise execution on a 0-100 scale based on smoothness, overshoot, and velocity profiles.
+  - Grade the patient's exercise execution on a 0-100 scale based on smoothness, overshoot, and velocity profiles.
 * **Stage 4: Adaptive Therapy Recommendation Engine**
-  - Uses the Quality Score to prescribe the next clinical action (e.g., "Increase Range of Motion", "Maintain", or "Decrease Difficulty").
+  - Use the Quality Score to prescribe the next clinical action (e.g., "Increase Range of Motion", "Maintain", or "Decrease Difficulty").
 
 ---
 
@@ -122,7 +124,7 @@ The platform's data strategy directly supports a 4-Stage Machine Learning pipeli
 ### 📂 Frontend (React TypeScript)
 * **[AuthContext.tsx](frontend/src/context/AuthContext.tsx):** Manages global authentication state and role-based access control.
 * **[DoctorDashboard.tsx](frontend/src/pages/Doctor/DoctorDashboard.tsx):** Fetches patients and their prescriptions, allowing doctors to create new routines.
-* **[PatientDashboard.tsx](frontend/src/pages/Patient/PatientDashboard.tsx):** Displays an interactive SVG joint visualizer drawing a 2D arm model dynamically using real-time serial feed trigonometry.
+* **[PatientDashboard.tsx](frontend/src/pages/Patient/PatientDashboard.tsx):** Engineered a low-latency, dynamic SVG joint visualizer that uses real-time trigonometry to render the patient's arm position live from the hardware feed across multiple camera angles.
 
 ---
 
