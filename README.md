@@ -126,6 +126,12 @@ The platform's data strategy is designed to support a 4-Stage Machine Learning p
 * **[DoctorDashboard.tsx](frontend/src/pages/Doctor/DoctorDashboard.tsx):** Fetches patients and their prescriptions, allowing doctors to create new routines.
 * **[PatientDashboard.tsx](frontend/src/pages/Patient/PatientDashboard.tsx):** Engineered a low-latency, dynamic SVG joint visualizer that uses real-time trigonometry to render the patient's arm position live from the hardware feed across multiple camera angles.
 
+### 📂 Firmware (Arduino Control System)
+* **[ElbowController.ino](firmware/ElbowController/ElbowController.ino):** The embedded C++ firmware for the Arduino. Implements macroscopic PWM control, a deadband for motor stalling prevention, and streams high-frequency 100Hz telemetry.
+
+### 📂 Mechanical CAD
+* **[cad files/](cad%20files/):** Contains the SolidWorks (`.SLDPRT`, `.SLDASM`) models for the 3D-printed exoskeleton components. *Note: We iteratively isolated the elbow joint from the initial full upper-limb suit to create a highly accurate, focused MVP for data collection.*
+
 ---
 
 ## 6. Quick Start
